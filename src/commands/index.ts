@@ -345,7 +345,7 @@ async function handleBiddingComplete(interaction: ChatInputCommandInteraction) {
     resultEmbed = new EmbedBuilder()
       .setColor(0xFFFF00)
       .setTitle('😴 Aucune Enchère')
-      .setDescription(`Personne n'a misé sur **${draftManager.currentPlayer}**. Le joueur sera attribué aléatoirement à la fin.`)
+      .setDescription(`Personne n'a misé sur **${draftManager.currentPlayer}**. Ce joueur sera remis dans le pool et pourra être tiré au sort à nouveau plus tard.`)
       .setTimestamp();
   }
 

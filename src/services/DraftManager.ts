@@ -76,11 +76,19 @@ export class DraftManager {
       return { success: false, message: "Il faut au moins 1 joueur pour commencer." };
     }
 
-    // Calculer le budget par capitaine
-    const playersPerCaptain = Math.floor(this.currentDraft.playerPool.length / this.currentDraft.captains.length);
-    const budgetPerCaptain = playersPerCaptain * this.PLAYER_VALUE;
+    // Calculer le nombre de joueurs par équipe (en comptant le capitaine comme 1 joueur)
+    // Chaque équipe aura : 1 capitaine + N joueurs draftés
+    const totalPlayers = this.currentDraft.playerPool.length + this.currentDraft.captains.length;
+    const playersPerTeam = Math.floor(totalPlayers / this.currentDraft.captains.length);
+    const playersToDraft = playersPerTeam - 1; // -1 car le capitaine compte comme 1 joueur
+    
+    if (playersToDraft <= 0) {
+      return { success: false, message: "Pas assez de joueurs pour former des équipes équilibrées." };
+    }
 
-    this.currentDraft.playersPerTeam = playersPerCaptain;
+    const budgetPerCaptain = playersToDraft * this.PLAYER_VALUE;
+
+    this.currentDraft.playersPerTeam = playersPerTeam;
 
     // Attribuer le budget à chaque capitaine
     this.currentDraft.captains.forEach(captain => {
@@ -103,12 +111,46 @@ export class DraftManager {
       return { success: false, message: "Capitaine non trouvé." };
     }
 
-    if (amount > captain.budget) {
-      return { success: false, message: `Budget insuffisant. Vous avez ${captain.budget.toLocaleString()}€.` };
+    // Vérifier si l'équipe du capitaine est complète
+    if (this.isTeamComplete(captain)) {
+      return { success: false, message: "🏆 Votre équipe est déjà complète !" };
     }
 
-    if (amount <= 0) {
-      return { success: false, message: "Le montant doit être positif." };
+    if (amount > captain.budget) {
+      return { success: false, message: `💰 Budget insuffisant. Vous avez ${captain.budget.toLocaleString()}€.` };
+    }
+
+    if (amount < 0) {
+      return { success: false, message: "💸 Le montant ne peut pas être négatif." };
+    }
+
+    // Permettre les enchères à 0€ si le capitaine n'a plus de budget
+    if (amount === 0 && captain.budget > 0) {
+      return { success: false, message: "💸 Vous devez miser au moins 1€ si vous avez un budget." };
+    }
+
+    // Vérifier que l'enchère est supérieure aux enchères existantes (sauf pour 0€)
+    const currentBids = Object.values(this.currentDraft.roundBids).filter(bid => bid > 0);
+    const highestBid = currentBids.length > 0 ? Math.max(...currentBids) : 0;
+    
+    if (amount > 0 && amount <= highestBid) {
+      return { 
+        success: false, 
+        message: `📈 Votre enchère doit être supérieure à ${highestBid.toLocaleString()}€ (enchère actuelle la plus haute).` 
+      };
+    }
+
+    // Vérifier qu'aucun autre capitaine n'a déjà misé ce montant exact (sauf pour 0€)
+    if (amount > 0) {
+      const existingBids = Object.entries(this.currentDraft.roundBids);
+      for (const [otherCaptainId, bid] of existingBids) {
+        if (otherCaptainId !== captainId && bid === amount) {
+          return { 
+            success: false, 
+            message: `🚫 Un autre capitaine a déjà misé ${amount.toLocaleString()}€. Votre enchère doit être unique.` 
+          };
+        }
+      }
     }
 
     // Enregistrer l'enchère
@@ -129,8 +171,15 @@ export class DraftManager {
       return { success: false, message: "Capitaine non trouvé." };
     }
 
+    // Vérifier si l'équipe du capitaine est complète
+    if (this.isTeamComplete(captain)) {
+      return { success: false, message: "🏆 Votre équipe est déjà complète ! Vous êtes automatiquement exclu des enchères." };
+    }
+
     captain.hasPassed = true;
     captain.currentBid = undefined;
+    // Supprimer l'enchère actuelle de ce capitaine
+    delete this.currentDraft.roundBids[captainId];
 
     return { success: true };
   }
@@ -140,9 +189,75 @@ export class DraftManager {
       return false;
     }
 
-    return this.currentDraft.captains.every(captain => 
-      captain.hasPassed || captain.currentBid !== undefined
+    // Obtenir les capitaines éligibles (équipe non complète ET budget > 0)
+    const eligibleCaptains = this.getEligibleCaptains();
+    
+    if (eligibleCaptains.length === 0) {
+      // Aucun capitaine éligible, le joueur sera distribué à la fin
+      return true;
+    }
+
+    if (eligibleCaptains.length === 1) {
+      // Un seul capitaine éligible
+      const soloCapt = eligibleCaptains[0];
+      
+      // S'il a déjà misé ou passé, les enchères sont terminées
+      if (soloCapt.hasPassed || this.currentDraft.roundBids[soloCapt.id] !== undefined) {
+        return true;
+      }
+      
+      // Sinon, on attend qu'il mise ou passe
+      return false;
+    }
+
+    // Plusieurs capitaines éligibles
+    // Compter ceux qui ont répondu (bid ou pass)
+    const respondedEligible = eligibleCaptains.filter(c => 
+      c.hasPassed || this.currentDraft!.roundBids[c.id] !== undefined
+    ).length;
+
+    // Si tous les capitaines éligibles ont répondu
+    if (respondedEligible === eligibleCaptains.length) {
+      // Vérifier s'il n'y a qu'un seul enchérisseur actif
+      const activeBidders = eligibleCaptains.filter(c => 
+        !c.hasPassed && this.currentDraft!.roundBids[c.id] !== undefined
+      );
+      
+      if (activeBidders.length <= 1) {
+        return true;
+      }
+      
+      // S'il y a plusieurs enchérisseurs, continuer les enchères
+      // Reset les états pour permettre de nouvelles enchères
+      eligibleCaptains.forEach(captain => {
+        if (!captain.hasPassed) {
+          captain.currentBid = undefined;
+          // Garder l'enchère dans roundBids mais permettre de surenchérir
+        }
+      });
+      
+      return false;
+    }
+
+    // Pas tous les capitaines éligibles ont répondu
+    return false;
+  }
+
+  private getEligibleCaptains(): Captain[] {
+    if (!this.currentDraft) return [];
+    
+    return this.currentDraft.captains.filter(captain => 
+      !this.isTeamComplete(captain) && captain.budget > 0
     );
+  }
+
+  private isTeamComplete(captain: Captain): boolean {
+    if (!this.currentDraft) return false;
+    
+    // Une équipe est complète si elle a playersPerTeam - 1 joueurs draftés
+    // (le -1 car le capitaine compte comme 1 joueur)
+    const maxDraftedPlayers = (this.currentDraft.playersPerTeam || 1) - 1;
+    return captain.players.length >= maxDraftedPlayers;
   }
 
   public resolveBidding(): BidResult {
@@ -150,18 +265,46 @@ export class DraftManager {
       return { winner: null, winningBid: 0, tiedCaptains: [] };
     }
 
+    // Vérifier s'il n'y a qu'un seul capitaine éligible
+    const eligibleCaptains = this.getEligibleCaptains();
+    
+    if (eligibleCaptains.length === 1) {
+      const soloCaptain = eligibleCaptains[0];
+      // S'il a misé quelque chose (même 0€), il gagne
+      if (this.currentDraft.roundBids[soloCaptain.id] !== undefined) {
+        const winningBid = this.currentDraft.roundBids[soloCaptain.id];
+        soloCaptain.budget -= winningBid;
+        soloCaptain.players.push(this.currentPlayer);
+        this.currentDraft.draftedPlayers.add(this.currentPlayer);
+        
+        return { winner: soloCaptain, winningBid, tiedCaptains: [] };
+      }
+    }
+
     const bids = Object.entries(this.currentDraft.roundBids)
       .map(([captainId, bid]) => ({
         captain: this.currentDraft!.captains.find(c => c.id === captainId)!,
         bid
       }))
-      .filter(entry => entry.bid > 0);
+      .filter(entry => entry.bid >= 0); // Inclure les enchères à 0€
 
     if (bids.length === 0) {
       // Personne n'a misé, le joueur sera attribué à la fin
       return { winner: null, winningBid: 0, tiedCaptains: [] };
     }
 
+    if (bids.length === 1) {
+      // Un seul enchérisseur
+      const winner = bids[0].captain;
+      const winningBid = bids[0].bid;
+      winner.budget -= winningBid;
+      winner.players.push(this.currentPlayer);
+      this.currentDraft.draftedPlayers.add(this.currentPlayer);
+      
+      return { winner, winningBid, tiedCaptains: [] };
+    }
+
+    // Plusieurs enchérisseurs - prendre le plus haut
     const maxBid = Math.max(...bids.map(b => b.bid));
     const winners = bids.filter(b => b.bid === maxBid);
 
@@ -173,7 +316,7 @@ export class DraftManager {
       
       return { winner, winningBid: maxBid, tiedCaptains: [] };
     } else {
-      // Égalité - tirage au sort
+      // Égalité - tirage au sort 
       const randomWinner = winners[Math.floor(Math.random() * winners.length)];
       const winner = randomWinner.captain;
       winner.budget -= maxBid;
@@ -208,8 +351,15 @@ export class DraftManager {
 
     // Reset captain states
     this.currentDraft.captains.forEach(captain => {
-      captain.hasPassed = false;
-      captain.currentBid = undefined;
+      if (this.isTeamComplete(captain)) {
+        // Automatiquement marquer les capitaines avec équipe complète comme ayant passé
+        captain.hasPassed = true;
+        captain.currentBid = undefined;
+      } else {
+        // Reset pour les capitaines éligibles
+        captain.hasPassed = false;
+        captain.currentBid = undefined;
+      }
     });
 
     return selectedPlayer;
