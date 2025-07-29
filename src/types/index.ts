@@ -10,11 +10,11 @@ export interface Captain {
 export interface DraftState {
   hostId: string;
   captains: Captain[];
-  playerPool: string[]; // noms ou mentions
+  playerPool: string[]; 
   draftedPlayers: Set<string>;
   currentPlayer: string | null;
   biddingOpen: boolean;
-  roundBids: Record<string, number>; // captainId -> bid
+  roundBids: Record<string, number>; 
   channelId: string;
   isActive: boolean;
   playersPerTeam?: number;

@@ -2,7 +2,7 @@ import { Captain, DraftState, BidResult } from '../types';
 
 export class DraftManager {
   private currentDraft: DraftState | null = null;
-  private readonly PLAYER_VALUE = 20_000_000; // 20M par joueur
+  private readonly PLAYER_VALUE = 20_000_000;
 
   constructor() {}
 
@@ -286,7 +286,7 @@ export class DraftManager {
         captain: this.currentDraft!.captains.find(c => c.id === captainId)!,
         bid
       }))
-      .filter(entry => entry.bid >= 0); // Inclure les enchères à 0€
+      .filter(entry => entry.bid >= 0); 
 
     if (bids.length === 0) {
       // Personne n'a misé, le joueur sera attribué à la fin
