@@ -18,6 +18,7 @@ export interface DraftState {
   channelId: string;
   isActive: boolean;
   playersPerTeam?: number;
+  lastDrawnPlayer?: string;
 }
 
 export interface BidResult {

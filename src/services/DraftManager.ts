@@ -2,13 +2,13 @@ import { Captain, DraftState, BidResult } from '../types';
 
 export class DraftManager {
   private currentDraft: DraftState | null = null;
-  private readonly PLAYER_VALUE = 20_000_000;
+  private readonly PLAYER_VALUE = 20;
 
   constructor() {}
 
   public createDraft(hostId: string, channelId: string): boolean {
     if (this.currentDraft?.isActive) {
-      return false; // Une draft est déjà active
+      return false; 
     }
 
     this.currentDraft = {
@@ -20,7 +20,8 @@ export class DraftManager {
       biddingOpen: false,
       roundBids: {},
       channelId,
-      isActive: true
+      isActive: true,
+      lastDrawnPlayer: undefined
     };
 
     return true;
@@ -124,13 +125,13 @@ export class DraftManager {
       return { success: false, message: "💸 Le montant ne peut pas être négatif." };
     }
 
-    // Permettre les enchères à 0€ si le capitaine n'a plus de budget
+    // NOUVELLE LOGIQUE : 0€ uniquement si budget = 0
     if (amount === 0 && captain.budget > 0) {
-      return { success: false, message: "💸 Vous devez miser au moins 1€ si vous avez un budget." };
+      return { success: false, message: "💸 Vous ne pouvez miser 0€ que si vous n'avez plus de budget." };
     }
 
-    // Vérifier que l'enchère est supérieure aux enchères existantes (sauf pour 0€)
-    const currentBids = Object.values(this.currentDraft.roundBids).filter(bid => bid > 0);
+    // Vérifier que l'enchère est supérieure aux enchères existantes
+    const currentBids = Object.values(this.currentDraft.roundBids);
     const highestBid = currentBids.length > 0 ? Math.max(...currentBids) : 0;
     
     if (amount > 0 && amount <= highestBid) {
@@ -246,9 +247,21 @@ export class DraftManager {
   private getEligibleCaptains(): Captain[] {
     if (!this.currentDraft) return [];
     
-    return this.currentDraft.captains.filter(captain => 
-      !this.isTeamComplete(captain) && captain.budget > 0
-    );
+    // Obtenir la mise la plus haute actuelle (TOUTES les enchères)
+    const currentBids = Object.values(this.currentDraft.roundBids);
+    const highestBid = currentBids.length > 0 ? Math.max(...currentBids) : 0;
+    
+    return this.currentDraft.captains.filter(captain => {
+      // L'équipe ne doit pas être complète
+      if (this.isTeamComplete(captain)) return false;
+      
+      // Si il n'y a pas encore d'enchères, tous les capitaines sont éligibles
+      if (highestBid === 0) return captain.budget >= 0;
+      
+      // Le capitaine doit pouvoir miser au-dessus de la plus haute enchère
+      // OU avoir budget = 0 (pour pouvoir miser 0€)
+      return captain.budget > highestBid || captain.budget === 0;
+    });
   }
 
   private isTeamComplete(captain: Captain): boolean {
@@ -343,9 +356,31 @@ export class DraftManager {
       return null;
     }
 
-    const randomIndex = Math.floor(Math.random() * availablePlayers.length);
-    const selectedPlayer = availablePlayers[randomIndex];
+    let selectedPlayer: string;
+
+    // Si il y a 3 joueurs ou plus disponibles et qu'on a un joueur précédent,
+    // éviter de retomber sur le même joueur immédiatement
+    if (availablePlayers.length >= 3 && this.currentDraft.lastDrawnPlayer) {
+      const playersExcludingLast = availablePlayers.filter(
+        player => player !== this.currentDraft!.lastDrawnPlayer
+      );
+      
+      if (playersExcludingLast.length > 0) {
+        const randomIndex = Math.floor(Math.random() * playersExcludingLast.length);
+        selectedPlayer = playersExcludingLast[randomIndex];
+      } else {
+        // Fallback au cas où (ne devrait pas arriver)
+        const randomIndex = Math.floor(Math.random() * availablePlayers.length);
+        selectedPlayer = availablePlayers[randomIndex];
+      }
+    } else {
+      // Tirage normal si moins de 3 joueurs ou pas de joueur précédent
+      const randomIndex = Math.floor(Math.random() * availablePlayers.length);
+      selectedPlayer = availablePlayers[randomIndex];
+    }
+
     this.currentDraft.currentPlayer = selectedPlayer;
+    this.currentDraft.lastDrawnPlayer = selectedPlayer; // Mémoriser le joueur tiré
     this.currentDraft.biddingOpen = true;
     this.currentDraft.roundBids = {};
 

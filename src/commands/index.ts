@@ -135,7 +135,7 @@ export const commands = [
         option.setName('montant')
           .setDescription('Le montant de votre enchère en euros')
           .setRequired(true)
-          .setMinValue(1)
+          .setMinValue(0)
       ),
     async execute(interaction: ChatInputCommandInteraction) {
       const amount = interaction.options.getInteger('montant', true);
