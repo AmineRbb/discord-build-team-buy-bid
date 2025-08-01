@@ -387,7 +387,7 @@ function startBiddingTimer(interaction: ChatInputCommandInteraction) {
       const warningEmbed = new EmbedBuilder()
         .setColor(0xFFA500)
         .setTitle('⏰ Inactivité Détectée!')
-        .setDescription('**5 secondes d\'inactivité restantes** avant la fin des enchères!\n\nToute action (`/bid` ou `/pass`) relance le timer.')
+        .setDescription('**5 secondes restants** avant la fin des enchères sur ce joueur!\n\nToute action (`/bid` ou `/pass`) relance le timer.')
         .setTimestamp();
 
       try {
@@ -422,7 +422,7 @@ async function handleBiddingTimeout(interaction: ChatInputCommandInteraction) {
   if (bidResult.winner) {
     resultEmbed = new EmbedBuilder()
       .setColor(0x00FF00)
-      .setTitle('⏰ Inactivité - Joueur Draftée!')
+      .setTitle('⏰ Fin du timer !')
       .setDescription(`**${bidResult.winner.username}** remporte **${draftManager.currentPlayer}** pour **${bidResult.winningBid.toLocaleString()}€** (15s d'inactivité)`)
       .setTimestamp();
 
