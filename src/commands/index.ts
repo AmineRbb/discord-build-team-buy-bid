@@ -409,7 +409,7 @@ function startBiddingTimer(interaction: ChatInputCommandInteraction) {
         console.error('Erreur lors du timeout:', error);
       }
     }
-  }, 1000); // Vérifier chaque seconde
+  }, 1000); 
 }
 
 async function handleBiddingTimeout(interaction: ChatInputCommandInteraction) {
