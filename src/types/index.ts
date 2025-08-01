@@ -19,6 +19,9 @@ export interface DraftState {
   isActive: boolean;
   playersPerTeam?: number;
   lastDrawnPlayer?: string;
+  biddingTimer?: NodeJS.Timeout;
+  biddingStartTime?: number;
+  warningTimerSent?: boolean;
 }
 
 export interface BidResult {

@@ -3,6 +3,8 @@ import { Captain, DraftState, BidResult } from '../types';
 export class DraftManager {
   private currentDraft: DraftState | null = null;
   private readonly PLAYER_VALUE = 20;
+  private readonly BIDDING_TIME_LIMIT = 15000; 
+  private readonly WARNING_TIME = 10000; 
 
   constructor() {}
 
@@ -117,6 +119,11 @@ export class DraftManager {
       return { success: false, message: "🏆 Votre équipe est déjà complète !" };
     }
 
+    // Empêcher de rebider après avoir passé
+    if (captain.hasPassed) {
+      return { success: false, message: "❌ Vous avez déjà passé pour ce joueur." };
+    }
+
     if (amount > captain.budget) {
       return { success: false, message: `💰 Budget insuffisant. Vous avez ${captain.budget.toLocaleString()}€.` };
     }
@@ -159,6 +166,9 @@ export class DraftManager {
     captain.currentBid = amount;
     captain.hasPassed = false;
 
+    // Redémarrer le timer d'inactivité
+    this.resetBiddingTimer();
+
     return { success: true };
   }
 
@@ -181,6 +191,9 @@ export class DraftManager {
     captain.currentBid = undefined;
     // Supprimer l'enchère actuelle de ce capitaine
     delete this.currentDraft.roundBids[captainId];
+
+    // Redémarrer le timer d'inactivité
+    this.resetBiddingTimer();
 
     return { success: true };
   }
@@ -228,7 +241,16 @@ export class DraftManager {
         return true;
       }
       
-      // S'il y a plusieurs enchérisseurs, continuer les enchères
+      // Vérifier si tous les enchérisseurs actifs ont le même montant (cas d'égalité)
+      const activeBids = activeBidders.map(c => this.currentDraft!.roundBids[c.id]);
+      const uniqueBids = [...new Set(activeBids)];
+      
+      if (uniqueBids.length === 1) {
+        // Tous les enchérisseurs actifs ont le même montant, terminer les enchères
+        return true;
+      }
+      
+      // S'il y a plusieurs enchérisseurs avec des montants différents, continuer les enchères
       // Reset les états pour permettre de nouvelles enchères
       eligibleCaptains.forEach(captain => {
         if (!captain.hasPassed) {
@@ -275,6 +297,11 @@ export class DraftManager {
 
   public resolveBidding(): BidResult {
     if (!this.currentDraft || !this.currentPlayer) {
+      return { winner: null, winningBid: 0, tiedCaptains: [] };
+    }
+
+    // Protection contre la duplication : vérifier si le joueur est déjà drafté
+    if (this.currentDraft.draftedPlayers.has(this.currentPlayer)) {
       return { winner: null, winningBid: 0, tiedCaptains: [] };
     }
 
@@ -397,6 +424,9 @@ export class DraftManager {
       }
     });
 
+    // Démarrer le timer pour les enchères
+    this.startBiddingTimer();
+
     return selectedPlayer;
   }
 
@@ -441,8 +471,82 @@ export class DraftManager {
 
   public endDraft(): void {
     if (this.currentDraft) {
+      this.stopBiddingTimer();
       this.currentDraft.isActive = false;
       this.currentDraft = null;
     }
+  }
+
+  private stopBiddingTimer(): void {
+    if (this.currentDraft?.biddingTimer) {
+      clearTimeout(this.currentDraft.biddingTimer);
+      this.currentDraft.biddingTimer = undefined;
+      this.currentDraft.biddingStartTime = undefined;
+      this.currentDraft.warningTimerSent = false;
+    }
+  }
+
+  private startBiddingTimer(): void {
+    if (!this.currentDraft) return;
+    
+    this.stopBiddingTimer(); // Arrêter le timer précédent s'il existe
+    
+    this.currentDraft.biddingStartTime = Date.now();
+    this.currentDraft.warningTimerSent = false;
+    
+    console.log(`🎯 Timer démarré pour ${this.currentDraft.currentPlayer} à ${new Date().toLocaleTimeString()}`);
+  }
+
+  public resetBiddingTimer(): void {
+    if (!this.currentDraft || !this.currentDraft.biddingOpen) return;
+    
+    this.currentDraft.biddingStartTime = Date.now();
+    this.currentDraft.warningTimerSent = false;
+    
+    console.log(`🔄 Timer redémarré (inactivité) pour ${this.currentDraft.currentPlayer} à ${new Date().toLocaleTimeString()}`);
+  }
+
+  public getRemainingTime(): number {
+    if (!this.currentDraft?.biddingStartTime) return 0;
+    
+    const elapsed = Date.now() - this.currentDraft.biddingStartTime;
+    const remaining = Math.max(0, this.BIDDING_TIME_LIMIT - elapsed);
+    return Math.ceil(remaining / 1000); // Retourner en secondes
+  }
+
+  public shouldShowWarning(): boolean {
+    if (!this.currentDraft?.biddingStartTime || this.currentDraft.warningTimerSent) return false;
+    
+    const elapsed = Date.now() - this.currentDraft.biddingStartTime;
+    const shouldWarn = elapsed >= this.WARNING_TIME;
+    
+    if (shouldWarn) {
+      console.log(`⚠️ Avertissement envoyé après ${elapsed}ms (seuil: ${this.WARNING_TIME}ms)`);
+      this.currentDraft.warningTimerSent = true;
+      return true;
+    }
+    return false;
+  }
+
+  public isBiddingTimeExpired(): boolean {
+    if (!this.currentDraft?.biddingStartTime) return false;
+    
+    const elapsed = Date.now() - this.currentDraft.biddingStartTime;
+    const isExpired = elapsed >= this.BIDDING_TIME_LIMIT;
+    
+    if (isExpired) {
+      console.log(`⏰ Temps expiré après ${elapsed}ms (seuil: ${this.BIDDING_TIME_LIMIT}ms)`);
+    }
+    
+    return isExpired;
+  }
+
+  public handleBiddingTimeout(): BidResult {
+    if (!this.currentDraft || !this.currentPlayer) {
+      return { winner: null, winningBid: 0, tiedCaptains: [] };
+    }
+
+    // Résoudre avec les enchères actuelles
+    return this.resolveBidding();
   }
 } 

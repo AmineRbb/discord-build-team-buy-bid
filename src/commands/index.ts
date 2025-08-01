@@ -1,7 +1,9 @@
-import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, SlashCommandStringOption, SlashCommandIntegerOption } from 'discord.js';
+import { SlashCommandBuilder, ChatInputCommandInteraction, EmbedBuilder, SlashCommandStringOption, SlashCommandIntegerOption, TextChannel } from 'discord.js';
 import { DraftManager } from '../services/DraftManager';
 
 const draftManager = new DraftManager();
+let biddingTimerInterval: NodeJS.Timeout | null = null;
+let currentChannel: TextChannel | null = null;
 
 export const commands = [
   {
@@ -108,7 +110,7 @@ export const commands = [
       const embed = new EmbedBuilder()
         .setColor(0xFF6600)
         .setTitle('🚀 Draft Commencée!')
-        .setDescription(`**Budget par capitaine:** ${(draft?.captains[0]?.budget || 0).toLocaleString()}€\n\n💰 **Joueur à drafter:** **${currentPlayer}**\n\n🎯 Capitaines, utilisez \`/bid <montant>\` ou \`/pass\``)
+        .setDescription(`**Budget par capitaine:** ${(draft?.captains[0]?.budget || 0).toLocaleString()}€\n\n💰 **Joueur à drafter:** **${currentPlayer}**\n\n🎯 Capitaines, utilisez \`/bid <montant>\` ou \`/pass\`\n⏰ **15 secondes d'inactivité = fin des enchères**`)
         .addFields(
           {
             name: '👑 Capitaines',
@@ -124,6 +126,7 @@ export const commands = [
         .setTimestamp();
 
       await interaction.reply({ embeds: [embed] });
+      startBiddingTimer(interaction);
     }
   },
 
@@ -277,7 +280,7 @@ export const commands = [
       if (remainingPlayers.length > 0) {
         embed.addFields({
           name: '📝 Joueurs non draftés',
-          value: remainingPlayers.slice(0, 10).join(', ') + (remainingPlayers.length > 10 ? '...' : ''),
+          value: remainingPlayers.join(', '),
           inline: false
         });
       }
@@ -309,6 +312,12 @@ export const commands = [
         return;
       }
 
+      // Arrêter le timer
+      if (biddingTimerInterval) {
+        clearInterval(biddingTimerInterval);
+        biddingTimerInterval = null;
+      }
+
       draftManager.endDraft();
 
       const embed = new EmbedBuilder()
@@ -319,10 +328,157 @@ export const commands = [
 
       await interaction.reply({ embeds: [embed] });
     }
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName('time')
+      .setDescription('Afficher le temps restant pour les enchères'),
+    async execute(interaction: ChatInputCommandInteraction) {
+      const draft = draftManager.getCurrentDraft();
+      
+      if (!draft || !draft.biddingOpen) {
+        await interaction.reply({
+          content: '❌ Aucune enchère en cours.',
+          ephemeral: true
+        });
+        return;
+      }
+
+      const remainingTime = draftManager.getRemainingTime();
+      
+      const embed = new EmbedBuilder()
+        .setColor(remainingTime <= 5 ? 0xFF0000 : 0x00FFFF)
+        .setTitle('⏰ Timer d\'Inactivité')
+        .setDescription(`**${remainingTime} secondes** d'inactivité restantes pour **${draftManager.currentPlayer}**\n\nToute action (/bid ou /pass) relance le timer à 15s.`)
+        .setTimestamp();
+
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
   }
 ];
 
+function startBiddingTimer(interaction: ChatInputCommandInteraction) {
+  console.log('🚀 Démarrage du timer de 15 secondes');
+  
+  if (biddingTimerInterval) {
+    clearInterval(biddingTimerInterval);
+  }
+
+  // Stocker le channel pour les messages ultérieurs
+  currentChannel = interaction.channel as TextChannel;
+
+  biddingTimerInterval = setInterval(async () => {
+    const draft = draftManager.getCurrentDraft();
+    const remainingTime = draftManager.getRemainingTime();
+    
+    console.log(`⏰ Timer check - Bidding open: ${draft?.biddingOpen}, Remaining: ${remainingTime}s`);
+    
+    if (!draft?.biddingOpen || !currentChannel) {
+      console.log('❌ Arrêt du timer - pas de draft active ou channel manquant');
+      clearInterval(biddingTimerInterval!);
+      biddingTimerInterval = null;
+      return;
+    }
+
+    // Vérifier si on doit afficher l'avertissement
+    if (draftManager.shouldShowWarning()) {
+      console.log('⚠️ Envoi de l\'avertissement 5 secondes');
+      const warningEmbed = new EmbedBuilder()
+        .setColor(0xFFA500)
+        .setTitle('⏰ Inactivité Détectée!')
+        .setDescription('**5 secondes d\'inactivité restantes** avant la fin des enchères!\n\nToute action (`/bid` ou `/pass`) relance le timer.')
+        .setTimestamp();
+
+      try {
+        await currentChannel.send({ embeds: [warningEmbed] });
+      } catch (error) {
+        console.error('Erreur lors de l\'envoi de l\'avertissement:', error);
+      }
+    }
+
+    // Vérifier si le temps est écoulé
+    if (draftManager.isBiddingTimeExpired()) {
+      console.log('⏰ Temps écoulé - résolution automatique');
+      clearInterval(biddingTimerInterval!);
+      biddingTimerInterval = null;
+      
+      try {
+        await handleBiddingTimeout(interaction);
+      } catch (error) {
+        console.error('Erreur lors du timeout:', error);
+      }
+    }
+  }, 1000); // Vérifier chaque seconde
+}
+
+async function handleBiddingTimeout(interaction: ChatInputCommandInteraction) {
+  const bidResult = draftManager.handleBiddingTimeout();
+  
+  if (!currentChannel) return;
+  
+  let resultEmbed: EmbedBuilder;
+  
+  if (bidResult.winner) {
+    resultEmbed = new EmbedBuilder()
+      .setColor(0x00FF00)
+      .setTitle('⏰ Inactivité - Joueur Draftée!')
+      .setDescription(`**${bidResult.winner.username}** remporte **${draftManager.currentPlayer}** pour **${bidResult.winningBid.toLocaleString()}€** (15s d'inactivité)`)
+      .setTimestamp();
+
+    if (bidResult.tiedCaptains.length > 1) {
+      resultEmbed.addFields({
+        name: '🎲 Égalité résolue par tirage au sort',
+        value: `Capitaines à égalité: ${bidResult.tiedCaptains.map(c => c.username).join(', ')}`,
+        inline: false
+      });
+    }
+  } else {
+    resultEmbed = new EmbedBuilder()
+      .setColor(0xFFFF00)
+      .setTitle('⏰ Inactivité - Aucune Enchère')
+      .setDescription(`15 secondes d'inactivité écoulées et personne n'a misé sur **${draftManager.currentPlayer}**. Ce joueur sera remis dans le pool.`)
+      .setTimestamp();
+  }
+
+  await currentChannel.send({ embeds: [resultEmbed] });
+
+  // Passer au joueur suivant
+  const nextPlayer = draftManager.drawNextPlayer();
+  
+  if (nextPlayer) {
+    const nextEmbed = new EmbedBuilder()
+      .setColor(0xFF6600)
+      .setTitle('🎯 Prochain Joueur')
+      .setDescription(`💰 **Joueur à drafter:** **${nextPlayer}**\n\n🎯 Capitaines, utilisez \`/bid <montant>\` ou \`/pass\`\n⏰ **15 secondes d'inactivité = fin des enchères**`)
+      .setTimestamp();
+
+    await currentChannel.send({ embeds: [nextEmbed] });
+    startBiddingTimer(interaction);
+  } else {
+    // Draft terminée
+    const finalEmbed = new EmbedBuilder()
+      .setColor(0x9932CC)
+      .setTitle('🏁 Draft Terminée!')
+      .setDescription('Tous les joueurs ont été attribués. Utilisez `/teams` pour voir les équipes finales.')
+      .setTimestamp();
+
+    await currentChannel.send({ embeds: [finalEmbed] });
+  }
+}
+
 async function handleBiddingComplete(interaction: ChatInputCommandInteraction) {
+  // Arrêter le timer actuel
+  if (biddingTimerInterval) {
+    clearInterval(biddingTimerInterval);
+    biddingTimerInterval = null;
+  }
+
+  // S'assurer que le channel est défini
+  if (!currentChannel) {
+    currentChannel = interaction.channel as TextChannel;
+  }
+
   const bidResult = draftManager.resolveBidding();
   
   let resultEmbed: EmbedBuilder;
@@ -358,10 +514,11 @@ async function handleBiddingComplete(interaction: ChatInputCommandInteraction) {
     const nextEmbed = new EmbedBuilder()
       .setColor(0xFF6600)
       .setTitle('🎯 Prochain Joueur')
-      .setDescription(`💰 **Joueur à drafter:** **${nextPlayer}**\n\n🎯 Capitaines, utilisez \`/bid <montant>\` ou \`/pass\``)
+      .setDescription(`💰 **Joueur à drafter:** **${nextPlayer}**\n\n🎯 Capitaines, utilisez \`/bid <montant>\` ou \`/pass\`\n⏰ **15 secondes d'inactivité = fin des enchères**`)
       .setTimestamp();
 
     await interaction.followUp({ embeds: [nextEmbed] });
+    startBiddingTimer(interaction);
   } else {
     // Draft terminée
     const finalEmbed = new EmbedBuilder()
