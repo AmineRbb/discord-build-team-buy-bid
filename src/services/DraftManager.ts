@@ -511,7 +511,7 @@ export class DraftManager {
     
     const elapsed = Date.now() - this.currentDraft.biddingStartTime;
     const remaining = Math.max(0, this.BIDDING_TIME_LIMIT - elapsed);
-    return Math.ceil(remaining / 1000); // Retourner en secondes
+    return Math.ceil(remaining / 1000);
   }
 
   public shouldShowWarning(): boolean {
