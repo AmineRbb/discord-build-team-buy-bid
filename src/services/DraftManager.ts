@@ -547,6 +547,7 @@ export class DraftManager {
     }
 
     // Résoudre avec les enchères actuelles
+    
     return this.resolveBidding();
   }
 } 
